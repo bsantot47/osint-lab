@@ -477,6 +477,8 @@ Toujours lancé avec `--only-used --no-password-recovery` (aucune procédure de
 récupération de mot de passe déclenchée). **Outil le plus sensible au regard
 des CGU** : à réserver aux cas où la finalité le justifie.
 
+Le résultat est lu dans le CSV `holehe_*_results.csv` (colonne `exists`), pas dans le code de sortie : holehe sort en code 1 dès qu'un site le limite (`[x]`) mais écrit quand même son CSV. La collecte n'échoue que si ce CSV est absent ou illisible. Les sites limités (`rateLimit`) sont listés comme non testés.
+
 | Option | Rôle |
 |---|---|
 | `--timeout S` | délai max par site (défaut 15) |
@@ -864,7 +866,8 @@ def lancer(enquete, entite, opts, maintenant: datetime | None = None,
 | `réponse > N octets` | réponse plus grosse que `taille_max_octets` | réduire `--limite`, ou augmenter `taille_max_octets` |
 | `sherlock introuvable : pipx install …` | programme absent du `PATH` | installer, puis `which sherlock` ; `pipx ensurepath` et rouvrir le terminal |
 | `sherlock interrompu après N s (--duree-max)` | trop long | augmenter `--duree-max` ou réduire `--sites` |
-| `holehe a échoué (code N), voir …` | erreur du programme | lire `holehe.stderr.txt` dans le dossier indiqué ; mettre à jour (`pipx upgrade holehe`) |
+| `holehe a échoué (code N) : aucun CSV de résultats produit` ou `: CSV illisible …` | holehe n'a pas écrit `holehe_*_results.csv` (ou son format a changé). Un code N non nul seul n'est **pas** une erreur : holehe sort en code 1 dès qu'un site le limite, et le CSV fait foi | lire `holehe.stderr.txt` dans le dossier indiqué ; mettre à jour (`pipx upgrade holehe`) ; colonnes attendues : `COLONNES_HOLEHE` dans `outils/courriel.py` |
+| `N site(s) non testé(s), limite de débit atteinte` | holehe a été limité par ces sites (`rateLimit` = True) | relancer plus tard ; la collecte est valide pour les autres sites |
 | `pseudo inutilisable` / `adresse e-mail invalide` | valeur refusée avant lancement (protection contre l'injection d'options) | corriger la valeur de l'entité (en ajouter une nouvelle, écarter l'ancienne) |
 | `spaCy n'est pas installé` / `modèle fr_core_news_md absent` | IA non installée | `pip install spacy && python -m spacy download fr_core_news_md` |
 | `fichier introuvable : …` | chemin de preuve ou de page | chemin absolu, ou relatif au dossier courant |
@@ -931,7 +934,8 @@ Les formats réels des API et des programmes n'ont été testés qu'en simulatio
 3. `lancer domaine` : crt.sh (et son robots.txt), RDAP, Shodan avec clé.
 4. `lancer pseudo` avec sherlock et maigret installés : options acceptées,
    rapports CSV (sherlock) et JSON simple (maigret) bien lus.
-5. `lancer courriel` avec holehe : options et CSV.
+5. `lancer courriel` avec holehe : options et CSV (colonnes conformes à
+   `COLONNES_HOLEHE`, succès même en code de sortie 1).
 6. `lancer fuite` avec une vraie clé HIBP.
 7. `pip install spacy && python -m spacy download fr_core_news_md`, puis
    `python -m pytest tests/test_ia_entites.py -q` (le test du vrai modèle ne doit plus être sauté).

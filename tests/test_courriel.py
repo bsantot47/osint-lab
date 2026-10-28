@@ -62,15 +62,49 @@ def test_sites_trouves(enquete):
     assert j["outil"] == "courriel" and "--no-password-recovery" in j["requete"]
 
 
-def test_repli_stdout(enquete):
-    texte = "\n".join(lancer(enquete, FauxLanceur(
-        stdout="[+] twitter.com\n[-] amazon.com\n[x] instagram.com\n")).lignes)
-    assert "holehe : 1 site(s)" in texte
+def test_code_non_nul_et_csv_present_est_un_succes(enquete):
+    """Cas réel : holehe sort en code 1 dès qu'un site le limite ([x]), mais
+    écrit quand même son CSV. C'est le CSV qui fait foi."""
+    csv_limite = HOLEHE_CSV + "instagram,instagram.com,register,True,True,False,,,\n"
+    res = lancer(enquete, FauxLanceur({"holehe_1700000000_jean.dupont@exemple.fr_results.csv":
+                                       csv_limite}, stdout="[x] instagram.com\n", code=1))
+    texte = "\n".join(res.lignes)
+    assert "holehe : 2 site(s)" in texte and "twitter.com" in texte
+    assert "1 site(s) non testé(s), limite de débit atteinte : instagram.com" in texte
+    synthese = next(f for f in res.fichiers if f.suffix == ".md").read_text(encoding="utf-8")
+    assert "Non testés (limite de débit) : instagram.com" in synthese
+    assert "code retour 1" in enquete.stockage.journal(enquete.id)[-1]["resultat_resume"]
 
 
-def test_echec(enquete):
-    with pytest.raises(ErreurOutil, match="holehe a échoué"):
-        lancer(enquete, FauxLanceur(code=1))
+def test_code_non_nul_csv_present_sans_compte(enquete):
+    vide = HOLEHE_CSV.splitlines()[0] + "\namazon,amazon.com,login,False,False,False,,,\n"
+    res = lancer(enquete, FauxLanceur({"holehe_1_jean_results.csv": vide}, code=1))
+    assert "holehe : 0 site(s)" in "\n".join(res.lignes)
+
+
+@pytest.mark.parametrize("code", [0, 1])
+def test_echec_sans_csv(enquete, code):
+    """Le stdout seul ne suffit plus : sans CSV, la collecte a échoué."""
+    with pytest.raises(ErreurOutil, match=r"holehe a échoué \(code %d\) : aucun CSV" % code):
+        lancer(enquete, FauxLanceur(stdout="[+] twitter.com\n", code=code))
+
+
+@pytest.mark.parametrize("contenu, motif", [
+    ("name,domain\ntwitter,twitter.com\n", "colonne\\(s\\) absente\\(s\\) method"),
+    ("", "colonne"),
+])
+def test_echec_csv_illisible(enquete, contenu, motif):
+    with pytest.raises(ErreurOutil, match="holehe a échoué.*CSV illisible.*" + motif):
+        lancer(enquete, FauxLanceur({"holehe_1_jean_results.csv": contenu}))
+
+
+def test_echec_csv_mal_encode(enquete):
+    class Binaire(FauxLanceur):
+        def __call__(self, cmd, cwd, **kw):
+            (cwd / "holehe_1_jean_results.csv").write_bytes(b"\xff\xfe\x00name")
+            return super().__call__(cmd, cwd, **kw)
+    with pytest.raises(ErreurOutil, match="CSV illisible"):
+        lancer(enquete, Binaire())
 
 
 def test_absent(enquete):

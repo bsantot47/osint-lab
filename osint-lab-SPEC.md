@@ -158,6 +158,8 @@ manquante, prioriser seule les pistes.
   tout ce qui commence par « - ») ; jamais de --tor ni de --proxy ; maigret en
   --no-recursion --no-extracting, 20 connexions ; holehe toujours en
   --no-password-recovery ; durée max par programme
+- holehe : le CSV de résultats fait foi, pas le code de sortie (code 1 dès
+  qu'un site le limite) ; erreur seulement si le CSV est absent ou illisible
 - `fuite` (HIBP) : truncateResponse, seuls les noms des fuites sont conservés
 - Les données des enquêtes expirées sont purgées à chaque lancement de l'outil
   (pas de démon)

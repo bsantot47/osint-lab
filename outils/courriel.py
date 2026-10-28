@@ -32,7 +32,8 @@ NOM = "courriel"
 TYPES = ("email",)
 INSTALLATION = "pipx install holehe (dans la VM)"
 EMAIL_VALIDE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._%+-]{0,63}@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
-LIGNE_TROUVEE = re.compile(r"^\[\+\]\s*(\S+)")
+COLONNES_HOLEHE = ("name", "domain", "method", "frequent_rate_limit", "rateLimit", "exists",
+                   "emailrecovery", "phoneNumber", "others")
 
 API_HIBP = "https://haveibeenpwned.com/api/v3/breachedaccount/{}"
 PAGE_FUITE = "https://haveibeenpwned.com/PwnedWebsites#{}"
@@ -60,13 +61,30 @@ def args_holehe(email: str, opts) -> list[str]:
             "--csv", "-T", str(opts.timeout)]
 
 
-def lire_holehe(dossier, stdout: str) -> list[str]:
+def lire_holehe(dossier) -> tuple[list[str], list[str]]:
+    """Lit le CSV de résultats de holehe : (sites où un compte existe, sites non
+    testés faute de limite de débit). C'est ce CSV, et non le code de sortie,
+    qui fait foi : holehe sort en code 1 dès qu'un site le limite ([x]) mais
+    écrit quand même ses résultats. Erreur seulement si le CSV manque ou est
+    illisible."""
     rapports = sorted(dossier.glob("holehe_*_results.csv"))
     if not rapports:
-        return [m.group(1) for m in map(LIGNE_TROUVEE.match, (stdout or "").splitlines()) if m]
-    with open(rapports[-1], newline="", encoding="utf-8") as f:
-        return [l.get("domain") or l.get("name", "") for l in csv.DictReader(f)
-                if str(l.get("exists")).lower() == "true"]
+        raise ErreurOutil("aucun CSV de résultats produit")
+    try:
+        with open(rapports[-1], newline="", encoding="utf-8") as f:
+            lecteur = csv.DictReader(f)
+            manquantes = [c for c in COLONNES_HOLEHE if c not in (lecteur.fieldnames or [])]
+            if manquantes:
+                raise ErreurOutil(f"CSV illisible ({rapports[-1].name}) : colonne(s) absente(s)"
+                                  f" {', '.join(manquantes)}")
+            lignes = list(lecteur)
+    except (OSError, UnicodeDecodeError, csv.Error) as ex:
+        raise ErreurOutil(f"CSV illisible ({rapports[-1].name}) : {ex}") from ex
+
+    def sites(colonne):
+        return [l["domain"] or l["name"] for l in lignes
+                if (l[colonne] or "").strip().lower() == "true"]
+    return sites("exists"), sites("rateLimit")
 
 
 def lancer(enquete, entite, opts, maintenant: datetime | None = None,
@@ -79,16 +97,23 @@ def lancer(enquete, entite, opts, maintenant: datetime | None = None,
     programme = programme or Programme("holehe", INSTALLATION)
     dossier = dossier_brut(enquete.chemin("bruts"), NOM, entite["id"], maintenant)
     r = programme.executer(enquete, NOM, args_holehe(email, opts), dossier, opts.duree_max)
-    sites = sorted(set(lire_holehe(dossier, r.stdout)))
-    if r.returncode != 0 and not sites:
-        raise ErreurOutil(f"holehe a échoué (code {r.returncode}), voir {dossier}")
+    try:
+        trouves, limites = lire_holehe(dossier)
+    except ErreurOutil as ex:
+        raise ErreurOutil(f"holehe a échoué (code {r.returncode}) : {ex}, voir {dossier}") from ex
+    sites, limites = sorted(set(trouves)), sorted(set(limites))
 
     lignes = [f"holehe : {len(sites)} site(s) où l'adresse est associée à un compte :"]
     lignes += [f"  {s}" for s in sites]
+    if limites:
+        lignes.append(f"  {len(limites)} site(s) non testé(s), limite de débit atteinte : "
+                      + ", ".join(limites) + " (relancer plus tard pour les couvrir)")
     md = [f"# Courriel — E{entite['id']} {echapper_md(email)}", "",
           f"Testé le {maintenant:%d/%m/%Y %H:%M} avec holehe (sans récupération de mot de"
           " passe). Indique qu'un compte existe, pas qui l'utilise.", ""]
     md += [f"- {echapper_md(s)}" for s in sites] or ["_Aucun site._"]
+    if limites:
+        md += ["", "Non testés (limite de débit) : " + ", ".join(map(echapper_md, limites))]
     if sites:
         lignes.append("  pour retenir : " + commande(
             "ajouter", "fait", f"Adresse {email} associée à un compte {sites[0]}",
