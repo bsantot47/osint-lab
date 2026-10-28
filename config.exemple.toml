@@ -1,0 +1,13 @@
+# Copier en config.local.toml (ignoré par git) et compléter.
+# Ne jamais mettre de clé dans un autre fichier.
+
+[reseau]
+delai_s = 2.0            # pause minimale entre deux appels vers un même domaine
+timeout_s = 20.0
+taille_max_octets = 10485760
+# user_agent = "osint-lab/0.1 (enquete OSINT, donnees publiques)"
+
+[cles]
+# hibp = ""              # https://haveibeenpwned.com/API/Key (payant)
+# pappers = ""           # https://www.pappers.fr/api
+# shodan = ""            # https://account.shodan.io (lecture seule de la base Shodan)

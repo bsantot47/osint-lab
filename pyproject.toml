@@ -1,0 +1,9 @@
+[project]
+name = "osint-lab"
+version = "0.1.0"
+description = "Pilote d'enquêtes OSINT traçables et conformes au cadre légal français"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

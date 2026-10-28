@@ -1,0 +1,14 @@
+# Secrets
+config.local.toml
+
+# Données d'enquête : jamais dans le dépôt
+enquetes/
+*.db
+*.db-wal
+*.db-shm
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
