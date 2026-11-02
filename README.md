@@ -236,10 +236,31 @@ python osint_lab.py rapport           # rapport Markdown sourcé dans enquetes/d
 python osint_lab.py cloturer          # demande « oui » ; fige l'enquête, archive le rapport final
 ```
 
+Pour faire relire le rapport sans exposer les identités :
+
+```bash
+python osint_lab.py anonymiser            # rapport-anonyme.md + correspondance.md (dernier rapport généré)
+python osint_lab.py desanonymiser         # rapport-final.md, identique au rapport d'origine
+python osint_lab.py desanonymiser relu.md # ou : un fichier retravaillé à partir du rapport anonymisé
+```
+
+`anonymiser` remplace chaque entité par une étiquette (`PERSONNE A`, `ENTREPRISE 1`,
+`PSEUDO A`, `EMAIL A`, `DOMAINE 1`, `NUMERO 1`…) et chaque URL par la nature de la
+source (`[fiche Pappers]`, `[registre officiel]`, `[compte public]`…). Il signale les
+morceaux de noms restés dans le texte (« M. Dupont ») : à relire avant toute
+diffusion, comme le contexte (dates, fonctions, lieux). Ne jamais transmettre
+`correspondance.md` avec le rapport : tant qu'elle existe, ce rapport reste une
+donnée personnelle (pseudonymisation).
+
+Relancer ces commandes n'écrase pas un travail manuel : un fichier produit modifié
+depuis sa génération est renommé `<nom>-modifie-AAAAMMJJ-HHMMSS.md`, et la commande
+l'indique.
+
 Après la clôture, plus aucune collecte ni modification n'est possible. Au
 terme de la durée de conservation (30 jours ici), la commande suivante, quelle
-qu'elle soit, purge les fiches, preuves et sorties brutes. Le rapport final, le
-cadrage et le journal restent.
+qu'elle soit, purge les fiches, preuves et sorties brutes, ainsi que
+`rapport-anonyme.md`, `correspondance.md`, `rapport-final.md` et leurs copies
+`-modifie-`. Le rapport final archivé dans `rapport/`, le cadrage et le journal restent.
 
 ### Ce que contient le dossier d'une enquête
 
@@ -250,7 +271,9 @@ enquetes/dupont/
 ├── fiches/       E1.md, E2.md… régénérées après chaque modification
 ├── preuves/      copies horodatées des fichiers de preuve
 ├── bruts/        sorties brutes des outils
-└── rapport/      rapports ; rapport-final-AAAAMMJJ.md à la clôture
+├── rapport/      rapports ; rapport-final-AAAAMMJJ.md à la clôture
+├── rapport-anonyme.md, correspondance.md   sortie de `anonymiser`
+└── rapport-final.md                        sortie de `desanonymiser`
 ```
 
 ---

@@ -21,6 +21,9 @@ from urllib.parse import quote
 from core.stockage import Stockage, domaine_enregistrable, sha256_fichier
 
 STATUTS_RAPPORTES = ("a_verifier", "confirme")
+TITRE_RAPPORT = "# Rapport d'enquête : "
+# Traitements du rapport lui-même : ni des requêtes ni des outils de collecte.
+HORS_METHODOLOGIE = ("cloture", "purge", "rapport", "anonymiser", "desanonymiser")
 LIBELLES_TYPE = {
     "compte": "Comptes", "email": "Adresses e-mail", "numero": "Numéros",
     "document": "Documents", "entreprise": "Entreprises", "personne": "Personnes",
@@ -55,7 +58,7 @@ def generer_rapport(stockage: Stockage, enquete_id: int,
     nb_ecartes = (len(stockage.entites(enquete_id, ("ecarte",)))
                   + len(stockage.faits(enquete_id, ("ecarte",))))
 
-    l: list[str] = [f"# Rapport d'enquête : {echapper_md(e.nom)}", ""]
+    l: list[str] = [f"{TITRE_RAPPORT}{echapper_md(e.nom)}", ""]
     l += [f"- **Finalité** : {echapper_md(e.finalite)}",
           f"- **Périmètre** : {echapper_md(e.perimetre) or 'non précisé'}",
           f"- **Ouverte le** : {e.date_creation:%d/%m/%Y}"]
@@ -121,7 +124,7 @@ def generer_rapport(stockage: Stockage, enquete_id: int,
     l.append("")
 
     journal = [j for j in stockage.journal(enquete_id)
-               if j["outil"] not in ("cloture", "purge", "rapport")]
+               if j["outil"] not in HORS_METHODOLOGIE]
     outils = sorted({j["outil"].split("/")[0] for j in journal})
     l.extend(["## Méthodologie", ""])
     l.append(f"- Requêtes journalisées : {len(journal)}"

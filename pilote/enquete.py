@@ -8,10 +8,16 @@ Un dossier par enquête :
     ├── fiches/       une fiche Markdown par entité, régénérée depuis la base
     ├── preuves/      copies horodatées des fichiers de preuve
     ├── bruts/        sorties brutes des outils
-    └── rapport/      rapports générés (le rapport final y est archivé)
+    ├── rapport/      rapports générés (le rapport final y est archivé)
+    ├── rapport-anonyme.md, correspondance.md   sortie de `anonymiser`
+    └── rapport-final.md                        sortie de `desanonymiser`
 
-À la purge d'une enquête expirée, fiches/, preuves/ et bruts/ sont supprimés ;
-restent cadrage.md, rapport/ et la base (fiche d'enquête et journal).
+Une sortie modifiée à la main n'est pas écrasée : elle est renommée
+<nom>-modifie-AAAAMMJJ-HHMMSS.md.
+
+À la purge d'une enquête expirée, fiches/, preuves/, bruts/, les trois fichiers
+ci-dessus et leurs copies modifiées sont supprimés ; restent cadrage.md, rapport/ et la base (fiche
+d'enquête et journal).
 """
 
 from __future__ import annotations
@@ -22,14 +28,21 @@ import shutil
 from datetime import datetime
 from pathlib import Path
 
-from core.rapport import echapper_md, ecrire_rapport, lien_md
-from core.stockage import FinaliteManquante, Stockage, TYPES_ENTITE
+from core import anonymisation
+from core.rapport import STATUTS_RAPPORTES, echapper_md, ecrire_rapport, lien_md
+from core.stockage import FinaliteManquante, Stockage, TYPES_ENTITE, sha256_fichier
 
 RACINE_DEFAUT = Path(__file__).resolve().parent.parent / "enquetes"
 NOM_VALIDE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 FICHIER_COURANTE = ".courante"
 SOUS_DOSSIERS = ("fiches", "preuves", "bruts", "rapport")
 A_PURGER = ("fiches", "preuves", "bruts")
+RAPPORT_ANONYME = "rapport-anonyme.md"
+CORRESPONDANCE = "correspondance.md"
+RAPPORT_RESTITUE = "rapport-final.md"
+FICHIERS_A_PURGER = (RAPPORT_ANONYME, CORRESPONDANCE, RAPPORT_RESTITUE)
+SUFFIXE_MODIFIE = "-modifie-"
+OUTILS_ANONYMISATION = ("anonymiser", "desanonymiser")
 
 
 class ErreurPilote(Exception):
@@ -143,6 +156,104 @@ class EnqueteOuverte:
         chemin = self.rapport(f"rapport-final-{maintenant:%Y%m%d}.md", maintenant)
         return chemin, expiration
 
+    # --- anonymisation ---------------------------------------------------
+
+    def dernier_rapport(self) -> Path:
+        """Le dernier rapport généré, d'après le journal : les noms de fichier ne
+        se trient pas entre rapport-AAAAMMJJ-HHMMSS et rapport-final-AAAAMMJJ."""
+        rapports = [j for j in self.stockage.journal(self.id) if j["outil"] == "rapport"]
+        if not rapports:
+            raise ErreurPilote("aucun rapport généré : lancer d'abord `rapport`")
+        chemin = self.chemin("rapport") / rapports[-1]["requete"].removeprefix("rapport ")
+        if not chemin.is_file():
+            raise ErreurPilote(f"dernier rapport introuvable : {chemin}")
+        return chemin
+
+    def _entites_a_masquer(self) -> list[tuple[str, str]]:
+        """Toutes les entités, écartées et hors périmètre comprises : leur nom peut
+        figurer dans l'énoncé d'un fait retenu. Les entités rapportées d'abord, pour
+        que leurs étiquettes ne dépendent pas de celles qu'on a exclues."""
+        s = self.stockage
+        return [(x["type"], x["valeur"])
+                for x in [*s.entites(self.id, STATUTS_RAPPORTES),
+                          *s.entites(self.id, ("ecarte", "hors_perimetre"))]]
+
+    def _empreinte_generee(self, nom: str) -> str | None:
+        """Empreinte journalisée à la dernière génération de ce fichier."""
+        motif = re.compile(re.escape(nom) + r" sha256 ([0-9a-f]{64})")
+        for j in reversed(self.stockage.journal(self.id)):
+            trouve = motif.search(j["resultat_resume"])
+            if j["outil"] in OUTILS_ANONYMISATION and trouve:
+                return trouve.group(1)
+        return None
+
+    def _conserver_si_modifie(self, nom: str, maintenant: datetime | None = None) -> Path | None:
+        """Met de côté, sous un nom daté, une sortie qui n'est plus celle qu'on a
+        générée, plutôt que d'écraser un travail manuel. Renvoie la copie."""
+        chemin = self.dossier / nom
+        if not chemin.is_file() or sha256_fichier(chemin) == self._empreinte_generee(nom):
+            return None
+        horodatage = (maintenant or datetime.now()).strftime("%Y%m%d-%H%M%S")
+        cible = chemin.with_name(f"{chemin.stem}{SUFFIXE_MODIFIE}{horodatage}.md")
+        n = 1
+        while cible.exists():
+            n += 1
+            cible = chemin.with_name(f"{chemin.stem}{SUFFIXE_MODIFIE}{horodatage}-{n}.md")
+        chemin.replace(cible)
+        return cible
+
+    def anonymiser(self) -> tuple[Path, Path, Path, anonymisation.Anonymise, list[Path]]:
+        """Écrit rapport-anonyme.md et correspondance.md depuis le dernier rapport.
+        Renvoie aussi les versions modifiées à la main mises de côté."""
+        if self.enquete.date_purge:
+            raise ErreurPilote("enquête purgée : les entités à masquer n'existent plus")
+        source = self.dernier_rapport()
+        a = anonymisation.anonymiser(source.read_text(encoding="utf-8"),
+                                     self._entites_a_masquer(), self.nom)
+        anonyme, table = self.dossier / RAPPORT_ANONYME, self.dossier / CORRESPONDANCE
+        conservees = [c for c in (self._conserver_si_modifie(RAPPORT_ANONYME),
+                                  self._conserver_si_modifie(CORRESPONDANCE)) if c]
+        table.write_text(anonymisation.ecrire_correspondance(a.correspondance), encoding="utf-8")
+        anonyme.write_text(a.texte, encoding="utf-8")
+        # Ni nom réel ni fragment dans le journal, conservé après la purge.
+        self.stockage.journaliser(
+            self.id, "anonymiser", f"{source.name} → {anonyme.name}",
+            resultat_resume=f"{a.correspondance.nb_entites} entité(s), "
+                            f"{len(a.correspondance.sources)} source(s), "
+                            f"{len(a.fragments)} fragment(s) à relire ; "
+                            + "".join(f"conservé : {c.name} ; " for c in conservees)
+                            + f"{table.name} sha256 {sha256_fichier(table)} ; "
+                            f"{anonyme.name} sha256 {sha256_fichier(anonyme)}")
+        return source, anonyme, table, a, conservees
+
+    def desanonymiser(self, fichier: str | Path | None = None
+                      ) -> tuple[Path, anonymisation.Restitue, Path | None]:
+        """Écrit rapport-final.md depuis rapport-anonyme.md ou le fichier indiqué.
+        Renvoie aussi la version modifiée à la main mise de côté, s'il y en a une."""
+        table = self.dossier / CORRESPONDANCE
+        if not table.is_file():
+            raise ErreurPilote(f"{CORRESPONDANCE} introuvable (`anonymiser` non lancé, "
+                               "ou table supprimée à la purge)")
+        source = Path(fichier) if fichier else self.dossier / RAPPORT_ANONYME
+        if not source.is_file():
+            raise ErreurPilote(f"fichier introuvable : {source}")
+        try:
+            texte = source.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            raise ErreurPilote(f"{source} n'est pas un fichier texte UTF-8") from None
+        r = anonymisation.desanonymiser(
+            texte, anonymisation.lire_correspondance(table.read_text(encoding="utf-8")))
+        final = self.dossier / RAPPORT_RESTITUE
+        conservee = self._conserver_si_modifie(RAPPORT_RESTITUE)
+        final.write_text(r.texte, encoding="utf-8")
+        self.stockage.journaliser(
+            self.id, "desanonymiser", f"{source.name} → {final.name}",
+            resultat_resume=f"{'exacte' if r.exact else 'formes canoniques'}, "
+                            f"{len(r.inconnues)} étiquette(s) inconnue(s) ; "
+                            + (f"conservé : {conservee.name} ; " if conservee else "")
+                            + f"{final.name} sha256 {sha256_fichier(final)}")
+        return final, r, conservee
+
 
 def _ecrire_cadrage(dossier: Path, nom: str, finalite: str, perimetre: str,
                     duree: int, departs: list[tuple[str, str]], date: datetime) -> None:
@@ -232,5 +343,9 @@ def purger_expirees(racine: str | Path | None = None,
                 continue
         for sous in A_PURGER:
             shutil.rmtree(dossier / sous, ignore_errors=True)
+        for fichier in FICHIERS_A_PURGER:
+            (dossier / fichier).unlink(missing_ok=True)
+            for copie in dossier.glob(f"{Path(fichier).stem}{SUFFIXE_MODIFIE}*.md"):
+                copie.unlink()
         purgees.append(nom)
     return purgees

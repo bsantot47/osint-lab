@@ -38,7 +38,8 @@ osint-lab/
 │   ├── config.py        # lecture de la config locale (clés d'API, délais), hors dépôt
 │   ├── requetes.py      # couche HTTP : délai entre appels, user agent, journal auto
 │   ├── stockage.py      # SQLite : entités, faits, sources, preuves + expiration
-│   └── rapport.py       # génération du rapport Markdown sourcé
+│   ├── rapport.py       # génération du rapport Markdown sourcé
+│   └── anonymisation.py # rapport à étiquettes, table de correspondance, restitution
 ├── pilote/
 │   ├── enquete.py       # créer, charger, sauver une enquête
 │   ├── etat.py          # ce qui est fait / à faire
@@ -90,6 +91,10 @@ pour une. L'outil signale qu'une confirmation est possible, l'utilisateur valide
 - `entites` — affiche le graphe des entités et leurs liens
 - `recouper` — construit le tableau faits / sources / statut
 - `rapport` — compile le rapport Markdown sourcé (exclut le hors-périmètre)
+- `anonymiser` — dernier rapport → `rapport-anonyme.md` (étiquettes, nature des
+  sources) et `correspondance.md` ; signale les morceaux de noms restants
+- `desanonymiser [fichier]` — réinjecte les vrais noms → `rapport-final.md` ;
+  exactement le rapport d'origine si le fichier est inchangé
 - `cloturer` — applique la durée de conservation (archive rapport, planifie
   suppression des bruts)
 - `confirmer <fait>` — confirmation par l'enquêteur (refusée sous 2 domaines)
@@ -145,6 +150,11 @@ manquante, prioriser seule les pistes.
   (`controler_cible`), même appelé hors de la CLI
 - Empreinte sha256 de chaque preuve (intégrité)
 - Champ `statut = hors_périmètre` exclu du rapport
+- `anonymiser` : refuse d'écrire si la restitution n'est pas fidèle ; la table ne
+  contient que ce qui figure dans le rapport ; aucun nom réel dans le journal ;
+  table, rapports dérivés et copies modifiées supprimés à la purge
+- `anonymiser`, `desanonymiser` : un fichier produit modifié depuis sa génération
+  (sha256 du journal) est renommé avec un suffixe daté, jamais écrasé
 - `cloturer` applique la durée de conservation définie au cadrage
 - Aucun téléchargement de base de fuite ; HIBP sert seulement à vérifier la
   présence

@@ -13,6 +13,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+from core.anonymisation import ErreurAnonymisation
 from core.config import CleManquante
 from core.requetes import ErreurRequete
 from core.stockage import ErreurStockage, STATUTS, TYPES_ENTITE
@@ -282,6 +283,8 @@ EXEMPLES = {
     "recouper": ["recouper"],
     "journal": ["journal", "journal --outil domaine", "journal --dernieres 20"],
     "rapport": ["rapport"],
+    "anonymiser": ["anonymiser", "-e dupont anonymiser"],
+    "desanonymiser": ["desanonymiser", "desanonymiser relu.md"],
     "cloturer": ["cloturer", "cloturer --oui"],
     "aide": ["aide", "aide ajouter", "aide ajouter fait", "aide lancer", "aide lancer fuite"],
 }
@@ -295,6 +298,7 @@ Parcours type (le détail de chaque commande : aide <commande>) :
   5. recouper ; confirmer F       confirmation : au moins 2 domaines indépendants
   6. statuer entite N ecarte|hors_perimetre               faux positifs, tiers
   7. rapport ; cloturer           rapport sourcé, puis purge à l'échéance
+  (facultatif) anonymiser ; desanonymiser                 rapport à étiquettes, et retour
 
 Outils de collecte (aide lancer OUTIL) :
 {outils}
@@ -428,6 +432,43 @@ def cmd_rapport(args) -> None:
         print(f"Rapport écrit : {e.rapport()}")
 
 
+def _signaler_conservee(copie: Path) -> None:
+    nom = copie.name.split(enq.SUFFIXE_MODIFIE)[0] + copie.suffix
+    print(f"Attention : {nom} avait été modifié depuis sa génération."
+          f" Votre version est conservée : {copie}")
+
+
+def cmd_anonymiser(args) -> None:
+    with _ouvrir(args) as e:
+        source, anonyme, table, a, conservees = e.anonymiser()
+        for copie in conservees:
+            _signaler_conservee(copie)
+        c = a.correspondance
+        print(f"Rapport source : {source}")
+        print(f"Rapport anonymisé : {anonyme}")
+        print(f"Correspondance : {table}  (à ne jamais transmettre avec le rapport)")
+        print(f"{c.nb_entites} entité(s) et {len(c.sources)} source(s) remplacées.")
+        if a.fragments:
+            print("À relire avant diffusion, morceaux de noms encore présents :")
+            print("\n".join(f"  « {f} »" for f in a.fragments))
+        print("Rapport pseudonymisé, pas anonyme au sens du RGPD : le contexte (dates, "
+              "fonctions, lieux) reste à relire.")
+
+
+def cmd_desanonymiser(args) -> None:
+    with _ouvrir(args) as e:
+        final, r, conservee = e.desanonymiser(args.fichier)
+        if conservee:
+            _signaler_conservee(conservee)
+        print(f"Rapport restitué : {final}")
+        if not r.exact:
+            print("Fichier différent du rapport anonymisé d'origine : chaque étiquette reprend"
+                  " la valeur de la table (casse et variantes d'origine non rétablies).")
+        if r.inconnues:
+            print("Étiquettes absentes de la table, laissées telles quelles :")
+            print("\n".join(f"  {x}" for x in r.inconnues))
+
+
 def cmd_cloturer(args) -> None:
     with _ouvrir(args) as e:
         if not args.oui:
@@ -540,6 +581,32 @@ def construire_parser() -> argparse.ArgumentParser:
 
     sous.add_parser("rapport", help="compiler le rapport sourcé").set_defaults(func=cmd_rapport)
 
+    c = sous.add_parser(
+        "anonymiser", help="version à étiquettes du dernier rapport, et table de correspondance",
+        description="Remplace dans le dernier rapport généré chaque entité de l'enquête par une"
+                    " étiquette (PERSONNE A, ENTREPRISE 1, PSEUDO A, EMAIL A, DOMAINE 1, NUMERO 1,"
+                    " DOCUMENT 1, IMAGE 1) et chaque URL par la nature de la source ([fiche"
+                    " Pappers], [registre officiel], [compte public]…). Écrit rapport-anonyme.md et"
+                    " correspondance.md dans le dossier de l'enquête. Une version modifiée à la main"
+                    " n'est pas écrasée : elle est renommée NOM-modifie-AAAAMMJJ-HHMMSS.md."
+                    " Signale les morceaux de noms restés dans le texte : ils sont à relire."
+                    " Local, journalisé. Tant que la table existe, le résultat reste une donnée"
+                    " personnelle (pseudonymisation).")
+    c.set_defaults(func=cmd_anonymiser)
+
+    c = sous.add_parser(
+        "desanonymiser", help="réinjecter les vrais noms : produit rapport-final.md",
+        description="Remplace les étiquettes par les valeurs de correspondance.md et écrit"
+                    " rapport-final.md dans le dossier de l'enquête. Une version modifiée à la main"
+                    " n'est pas écrasée : elle est renommée"
+                    " rapport-final-modifie-AAAAMMJJ-HHMMSS.md."
+                    " Sur le rapport anonymisé inchangé, redonne exactement le rapport d'origine ;"
+                    " sur un fichier modifié, chaque étiquette reprend la valeur de la table. Les"
+                    " étiquettes se reconnaissent à l'identique, casse comprise.")
+    c.add_argument("fichier", nargs="?",
+                   help="fichier à traiter (défaut : rapport-anonyme.md de l'enquête)")
+    c.set_defaults(func=cmd_desanonymiser)
+
     c = sous.add_parser("cloturer", help="clore, archiver le rapport, planifier la purge")
     c.add_argument("--oui", action="store_true", help="ne pas demander confirmation")
     c.set_defaults(func=cmd_cloturer)
@@ -558,7 +625,7 @@ def main(argv: list[str] | None = None) -> int:
                   file=sys.stderr)
         args.func(args)
     except (ErreurPilote, ErreurStockage, ErreurOutil, ErreurRequete, CleManquante, ErreurIA,
-            sqlite3.IntegrityError) as ex:
+            ErreurAnonymisation, sqlite3.IntegrityError) as ex:
         print(f"erreur : {ex}", file=sys.stderr)
         return 1
     return 0

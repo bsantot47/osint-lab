@@ -60,7 +60,8 @@ osint-lab/
 │   ├── config.py         lecture de config.local.toml (réseau, clés d'API)
 │   ├── stockage.py       SQLite : schéma, règles (finalité, confirmation, journal), purge
 │   ├── requetes.py       client HTTP unique : finalité, robots.txt, débit, journal, redirections
-│   └── rapport.py        rapport Markdown sourcé (exclut le hors-périmètre)
+│   ├── rapport.py        rapport Markdown sourcé (exclut le hors-périmètre)
+│   └── anonymisation.py  rapport à étiquettes, table de correspondance, restitution
 ├── pilote/               orchestration et interface
 │   ├── enquete.py        dossiers d'enquête, enquête courante, preuves, fiches, clôture, purge
 │   ├── etat.py           calcul de l'état : départ, compteurs, tâches, confirmables, suggestions
@@ -89,7 +90,7 @@ osint_lab.py → pilote/cli.main
    1. purge des enquêtes dont la conservation est échue (pilote/enquete.purger_expirees)
    2. ouverture de l'enquête visée (-e NOM, sinon enquête courante)
    3. la commande appelle :
-        - pilote/enquete (preuves, fiches, rapport, clôture)
+        - pilote/enquete (preuves, fiches, rapport, anonymisation, clôture)
         - core/stockage  (écritures, toutes contrôlées : finalité, clôture, confirmation)
         - outils/<outil>.lancer  → core/requetes.ClientHTTP (réseau)
                                  → outils/commun.Programme (sous-processus)
@@ -115,7 +116,11 @@ enquetes/<nom>/
 ├── fiches/       une fiche Markdown par entité, régénérée depuis la base après chaque modification
 ├── preuves/      copies horodatées des fichiers de preuve (AAAAMMJJ-HHMMSS-E<n>-<nom>)
 ├── bruts/        sorties brutes des outils (<outil>-E<n>-AAAAMMJJ-HHMMSS.*)
-└── rapport/      rapports ; rapport-final-AAAAMMJJ.md à la clôture
+├── rapport/      rapports ; rapport-final-AAAAMMJJ.md à la clôture
+├── rapport-anonyme.md    rapport à étiquettes (`anonymiser`)
+├── correspondance.md     table étiquette ↔ valeur réelle (`anonymiser`)
+├── rapport-final.md      rapport restitué (`desanonymiser`)
+└── <nom>-modifie-AAAAMMJJ-HHMMSS.md   version modifiée à la main d'un de ces fichiers
 enquetes/.courante   nom de l'enquête courante
 ```
 
@@ -357,6 +362,88 @@ avec leurs preuves (nom de fichier, date, sha256) ; liens ; méthodologie
 écartées). Exclus : tout ce qui est hors périmètre (entités, leurs faits et
 liens), et le détail des éléments écartés. L'empreinte sha256 du rapport est
 journalisée.
+
+### `anonymiser` — rapport à étiquettes
+
+```bash
+python osint_lab.py anonymiser   # → enquetes/<nom>/rapport-anonyme.md et correspondance.md
+```
+
+Part du **dernier rapport généré**, d'après le journal (les noms de fichier ne se
+trient pas entre `rapport-AAAAMMJJ-HHMMSS` et `rapport-final-AAAAMMJJ`). Sans
+rapport : lancer `rapport` d'abord. Possible après la clôture, refusé après la
+purge (les entités à masquer n'existent plus). Les deux fichiers sont régénérés à
+chaque lancement, sans écraser un travail manuel (voir `desanonymiser`). Script pur, sans réseau ni IA (`core/anonymisation.py`).
+
+**Entités.** Toutes les entités de l'enquête sont cherchées, écartées et hors
+périmètre comprises : leur nom peut figurer dans l'énoncé d'un fait retenu.
+
+| Type | Étiquette | | Type | Étiquette |
+|---|---|---|---|---|
+| personne | `PERSONNE A`, `B`… `Z`, `AA`… | | domaine | `DOMAINE 1`, `2`… |
+| entreprise | `ENTREPRISE 1`, `2`… | | numero | `NUMERO 1`, `2`… |
+| compte | `PSEUDO A`, `B`… | | document | `DOCUMENT 1`, `2`… |
+| email | `EMAIL A`, `B`… | | image | `IMAGE 1`, `2`… |
+
+Le nom de l'enquête, dans le titre du rapport, devient `DOSSIER 1`.
+
+Numérotation : d'abord les entités rapportées par ordre d'ajout, puis les exclues,
+**parmi celles présentes dans le rapport** seulement. Aucun trou ne trahit une
+entité exclue, et ajouter une entité ne change pas les étiquettes existantes. En
+contrepartie, exclure une entité décale les suivantes. Une étiquette déjà écrite
+telle quelle dans le rapport est sautée (« UNE PERSONNE A SIGNÉ »).
+
+**Formes reconnues.** Du plus long au plus court, en une seule passe, sans couper
+un mot : casse, accents et ligatures (`Hélène` = `HELENE`, `Cœur` = `COEUR`),
+échappement Markdown (`jdupont\_pro`), séparateurs (`jean-dupont`, `jean.dupont`,
+`jeandupont`). En plus : `Dupont Jean` pour une personne ; la forme sans `SAS`,
+`SARL`… pour une entreprise, sauf s'il ne reste qu'un mot générique ; `06…`,
+`+33 6…` et `0033 6…` pour un numéro français.
+
+**Sources.** Toute URL est remplacée en entier, y compris le nom qu'elle contient,
+selon la table `NATURES` : `[fiche Pappers]`, `[fiche Societe.com]`, `[registre
+officiel]`, `[article de presse]`, `[archive web]`, `[compte public]`, `[document
+officiel]`. Hôte absent de la table : `[source web]`, plutôt qu'une nature fausse.
+Deux URL distinctes de même nature sont numérotées (`[fiche Pappers 2]`), sans quoi
+la restitution serait impossible.
+
+**Limites : à relire avant diffusion.**
+
+- Un **morceau** de nom n'est pas remplacé : « M. Dupont » pour `Jean Dupont` peut
+  être un nom, mais « blanc » pour `Jean Blanc` peut être une couleur. L'outil les
+  affiche (« À relire ») et l'enquêteur tranche. Le journal n'en garde que le nombre.
+- Le **contexte** reste : dates, fonctions, lieux, montants, empreintes sha256 et
+  noms de fichiers de preuve peuvent suffire à identifier une personne.
+- Tant que la table existe, c'est une **pseudonymisation** (RGPD art. 4.5) : le
+  rapport reste une donnée personnelle, et la table ne doit pas l'accompagner.
+
+### `desanonymiser [FICHIER]` — réinjecter les vrais noms
+
+```bash
+python osint_lab.py desanonymiser           # rapport-anonyme.md → rapport-final.md
+python osint_lab.py desanonymiser relu.md   # un fichier retravaillé → rapport-final.md
+```
+
+Lit `correspondance.md` et régénère `rapport-final.md` à chaque lancement (à ne pas
+confondre avec `rapport/rapport-final-AAAAMMJJ.md`, l'archive de clôture).
+
+**Travail manuel préservé** (`anonymiser` et `desanonymiser`). Le journal garde le
+sha256 de chaque fichier produit. Si le fichier présent n'a plus cette empreinte, ou
+n'en a jamais eu, il est renommé `<nom>-modifie-AAAAMMJJ-HHMMSS.md` avant la
+régénération, la commande l'indique et le journal note la copie. Les copies ne sont
+jamais relues par l'outil et sont supprimées à la purge. Pour reprendre une version
+modifiée de `rapport-anonyme.md`, la passer en argument ; elle s'interprète avec la
+table courante, dont les étiquettes changent si les entités du rapport ont changé.
+
+| Fichier traité | Résultat |
+|---|---|
+| inchangé (même sha256 que dans la table) | **exactement** le rapport d'origine : chaque variante (`JEAN DUPONT`) est rétablie à sa place |
+| modifié | chaque étiquette reprend la valeur réelle de la table ; le message le signale |
+
+Les étiquettes se reconnaissent à l'identique, casse comprise : « une personne a
+signé » n'est jamais prise pour `PERSONNE A`. Une étiquette modifiée (`Personne A`)
+n'est donc pas restituée. Une étiquette absente de la table est laissée telle
+quelle et signalée.
 
 ### `cloturer [--oui]`
 
@@ -663,7 +750,19 @@ Lecture : commande `journal`. Tests : `test_journal_en_ajout_seul`,
 | `ia/confiance.candidats` | n'évalue jamais une entité inactive |
 
 Tests : `test_hors_perimetre_absent_du_rapport`,
-`test_outil_refuse_entite_inactive` (chaque outil × chaque statut inactif).
+`test_outil_refuse_entite_inactive` (chaque outil × chaque statut inactif),
+`test_entites_exclues_masquees_dans_le_texte_sans_trou_ni_trace`.
+
+### Anonymisation
+
+| Où | Quoi |
+|---|---|
+| `core/anonymisation.anonymiser` | masque aussi les entités exclues citées dans un fait retenu ; ne met dans la table que ce qui figure dans le rapport ; **refuse d'écrire** si la restitution ne redonne pas le texte d'origine |
+| `core/anonymisation._fragments` | signale les morceaux de noms restants, sans décider à la place de l'enquêteur |
+| `EnqueteOuverte.anonymiser` | refus après purge ; journal (sha256, comptes), jamais de nom réel ni de fragment : il survit à la purge |
+| `pilote/enquete.purger_expirees` | supprime `rapport-anonyme.md`, `correspondance.md`, `rapport-final.md` et leurs copies `-modifie-` à l'échéance |
+
+Tests : `tests/test_anonymisation.py`.
 
 ### Confirmation verrouillée
 
@@ -851,6 +950,10 @@ def lancer(enquete, entite, opts, maintenant: datetime | None = None,
 | `l'enquête « X » existe déjà` | nom pris | autre nom, ou `ouvrir X` |
 | `l'enquête « X » est close` | collecte ou écriture après clôture | normal ; une enquête close ne se rouvre pas, en créer une nouvelle |
 | `enquête purgée : le rapport archivé est dans rapport/` | conservation échue | lire `enquetes/X/rapport/rapport-final-*.md` |
+| `aucun rapport généré : lancer d'abord « rapport »` | `anonymiser` sans rapport | lancer `rapport` |
+| `enquête purgée : les entités à masquer n'existent plus` | `anonymiser` après la purge | sans entités, rien à masquer de façon fiable |
+| `correspondance.md introuvable` | `anonymiser` non lancé, ou table purgée | lancer `anonymiser` ; après la purge, lire le rapport archivé |
+| `la restitution ne redonnerait pas le rapport d'origine` | garde de `anonymiser` | rien n'a été écrit ; signaler le cas |
 | `EN est écartée : aucune collecte sur cette entité` | entité écartée ou hors périmètre | `statuer entite N a_verifier` si c'était une erreur |
 | `cet outil ne s'applique pas à une entité X` / `… ne s'applique pas …` | type non accepté | `aide lancer OUTIL` (types acceptés) |
 | `outil « X » inconnu ou pas encore disponible` | outil non écrit (ex. `exif`) | voir §6 « Méthodes sans outil » |
@@ -917,6 +1020,7 @@ sans pause ; les tests de sous-processus utilisent un faux lanceur. Le test
 | `test_stockage.py` | schéma, finalité, confirmation, triggers, preuves, clôture, purge |
 | `test_requetes.py` | robots.txt, débit, journal, masquage des clés, redirections |
 | `test_rapport.py` | contenu du rapport, exclusions |
+| `test_anonymisation.py` | aucune valeur réelle restante, `desanonymiser(anonymiser(x)) == x`, formes, URL, commandes, purge |
 | `test_config.py` | lecture de la configuration |
 | `test_guide.py` | règles de pivot pour chaque type |
 | `test_pilote.py` | commandes de bout en bout, aide, journal |
