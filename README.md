@@ -4,6 +4,17 @@ Pilote d'enquêtes OSINT en ligne de commande, **traçable et conforme au cadre
 légal français**. L'outil guide l'enquêteur (quoi faire ensuite), range les
 trouvailles, journalise chaque requête et produit un rapport sourcé.
 
+## En bref
+
+- Projet personnel conçu et développé en 2026 par Béranger Santot
+  ([LinkedIn](https://www.linkedin.com/in/beranger-santot-76946424b)).
+- **431 tests automatisés** ; le cœur n'utilise que la bibliothèque standard Python.
+- Chaque fait est rattaché à ses sources ; un fait n'est confirmé qu'avec deux domaines indépendants.
+- Anonymisation réversible des rapports, pour les faire relire sans exposer les identités.
+- Justification légale de chaque action : [JUSTIFICATION_LEGALE.md](JUSTIFICATION_LEGALE.md).
+- **Statut** : prototype fonctionnel. Les outils réseau sont validés en simulation,
+  pas encore sur une enquête réelle.
+
 Quatre principes, imposés par le code et pas seulement par la documentation :
 
 - **Script d'abord, IA en dernier recours** : tout ce qui est déterministe est
@@ -164,7 +175,7 @@ python osint_lab.py nouvelle dupont \
   --perimetre "activité professionnelle uniquement" \
   --conservation 30 \
   --depart "personne:Jean Dupont" \
-  --depart "email:jdupont@dupont-conseil.fr"
+  --depart "email:jdupont@dupont-conseil.example"
 ```
 
 Sans `--finalite`, l'outil la demande ; vide, l'enquête est refusée.
@@ -174,7 +185,7 @@ appliquent (sinon `-e dupont` ou `ouvrir dupont`).
 ```
 Départ :
   E1 personne « Jean Dupont »
-  E2 email « jdupont@dupont-conseil.fr »
+  E2 email « jdupont@dupont-conseil.example »
 À faire :
   E1 personne « Jean Dupont » : requêtes Google/Bing prêtes à cliquer → lancer dorks --entite 1
   E1 personne « Jean Dupont » : annuaire-entreprises et Pappers : mandats, liens → lancer entreprises --entite 1
